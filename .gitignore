@@ -1,0 +1,3 @@
+# unuseful python files
+__pycache__/
+*.py[ouc]

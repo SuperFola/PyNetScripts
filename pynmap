@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+
+import os, sys, subprocess
+
+
+
+def main(*args):
+    """
+        pynmap ip/mask
+    """
+
+    if len(args) == 1:
+        ip_mask = args[0].split("/")
+        if len(ip_mask) != 2:
+            print(f"need ip/mask, not {'/'.join(ip_mask)}")
+            return -1
+        ip, mask = ip_mask
+        try:
+            mask = int(mask)
+        except ValueError:
+            print(f"Excepting mask as integer, not {mask}")
+            return -1
+        ip = ip.split(".")
+        if len(ip) != 4:
+            print(f"ip formatted the wrong way, need a.b.c.d, not {'.'.join(ip)}")
+        try:
+            ip = [int(c) for c in ip]
+        except ValueError:
+            print(f"IP formatted the wrong way, need a.b.c.d, not {'.'.join(ip)}")
+
+        b = ''.join(bin(c)[2:].zfill(8) for c in ip)
+        ip_count = int(f"0b{b[:mask]}{''.join('1' for _ in range(len(b) - mask))}", 2) - int(f"0b{b}", 2)
+        
+        for i in range(ip_count):
+            try:
+                b = bin(int(f"0b{b}", 2) + 1)[2:].zfill(8 * 4)
+                temp_ip = ["0b" + b[i*8:i*8+8] for i in range(0, 4)]
+                temp_ip = '.'.join([str(int(c, 2)) for c in temp_ip])
+                p = subprocess.getoutput(f"fping -c1 -t100 {temp_ip}")
+                if "xmt/rcv/%loss = 1/0/100%" not in p:
+                    print(f"{temp_ip} REACHABLE")
+            except KeyboardInterrupt:
+                return 0
+    
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(*sys.argv[1:]))
