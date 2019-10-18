@@ -10,38 +10,54 @@ def main(*args):
     """
 
     if len(args) == 1:
+        # retrieving argument
         ip_mask = args[0].split("/")
         if len(ip_mask) != 2:
             print(f"need ip/mask, not {'/'.join(ip_mask)}")
             return -1
+
+        # retrieve ip and mask
         ip, mask = ip_mask
         try:
             mask = int(mask)
+            if mask < 0 or mask > 32:
+                raise ValueError
         except ValueError:
-            print(f"Excepting mask as integer, not {mask}")
+            print(f"Excepting mask as integer in range [0, 32], not {mask}")
             return -1
+
+        # retrieving ip address
         ip = ip.split(".")
         if len(ip) != 4:
             print(f"ip formatted the wrong way, need a.b.c.d, not {'.'.join(ip)}")
         try:
             ip = [int(c) for c in ip]
+            for ip_chunk in ip:
+                if ip_chunk < 0 or ip_chunk > 255:
+                    raise ValueError
         except ValueError:
-            print(f"IP formatted the wrong way, need a.b.c.d, not {'.'.join(ip)}")
+            print(f"IP formatted the wrong way, need a.b.c.d (a, b, c and d in range [0, 255]), not {'.'.join(ip)}")
 
+        # format to binary to apply mask and retrieve ip count
         b = ''.join(bin(c)[2:].zfill(8) for c in ip)
         ip_count = int(f"0b{b[:mask]}{''.join('1' for _ in range(len(b) - mask))}", 2) - int(f"0b{b}", 2)
-        
+
+        # test all ip
         for i in range(ip_count):
             try:
+                # create a valid ip address
                 b = bin(int(f"0b{b}", 2) + 1)[2:].zfill(8 * 4)
                 temp_ip = ["0b" + b[i*8:i*8+8] for i in range(0, 4)]
                 temp_ip = '.'.join([str(int(c, 2)) for c in temp_ip])
+
+                # call fping which let us choose the timeout, here 100ms
+                # because on a local network, the latency is often < 50ms
                 p = subprocess.getoutput(f"fping -c1 -t100 {temp_ip}")
                 if "xmt/rcv/%loss = 1/0/100%" not in p:
-                    print(f"{temp_ip} REACHABLE")
+                    print(f"{temp_ip}")
             except KeyboardInterrupt:
                 return 0
-    
+
     return 0
 
 
