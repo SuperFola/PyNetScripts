@@ -25,8 +25,21 @@ def clear():
         os.system('clear')
 
 
-def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_null=False):
+def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_null=False, order='total'):
     colorama.init()
+
+    # total
+    sorting_meth = lambda x: x[1]['in'] + x[1]['out']
+    order_rev = True
+    if order == 'bwin':
+        sorting_meth = lambda x: x[1]['tfin']['in']
+        order_rev = True
+    elif order == 'bwout':
+        sorting_meth = lambda x: x[1]['tfout']['out']
+        order_rev = True
+    elif order == 'ip':
+        sorting_meth = lambda x: x[0]
+        order_rev = False
 
     total = {}
     '''
@@ -39,14 +52,14 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_
     def human(num, in_sec=True):
         if num is None:
             text = "0.0 b/sec" if in_sec else "0.0 b"
-            return color['b'] + text
+            return color['b'] + text + colorama.Style.RESET_ALL
 
         for x in ['b', 'KB', 'MB', 'GB', 'TB']:
             if num < 1024.0:
                 if in_sec:
-                    return color[x] + f"{num / pool_interval:3.1f} {x}/sec"
+                    return color[x] + f"{num / pool_interval:3.1f} {x}/sec" + colorama.Style.RESET_ALL
                 else:
-                    return color[x] + f"{num:3.1f} {x}"
+                    return color[x] + f"{num:3.1f} {x}" + colorama.Style.RESET_ALL
             num /= 1024.0
 
     # callback function to process each packet
@@ -57,12 +70,19 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_
             dst = pkt.sprintf("%IP.dst%")
             size = pkt.sprintf("%IP.len%")
 
-            traffic[src] = {'in': 0, 'out': 0} if src not in traffic else {'in': traffic[src]['in'], 'out': traffic[src]['out'] + int(size)}
-            traffic[dst] = {'in': 0, 'out': 0} if dst not in traffic else {'in': traffic[dst]['in'] + int(size), 'out': traffic[dst]['out']}
+            total[src] = {'in': 0, 'out': 0, 'tfin': 0, 'tfout': 0} if src not in total else {
+                'in': total[src]['in'],
+                'out': total[src]['out'] + int(size),
+                'tfin': total[src]['tfin']  + int(size),
+                'tfout': total[src]['tfout'] + int(size)
+            }
+            total[dst] = {'in': 0, 'out': 0, 'tfin': 0, 'tfout': 0} if dst not in total else {
+                'in': total[dst]['in'] + int(size),
+                'out': total[dst]['out'],
+                'tfin': total[src]['tfin']  + int(size),
+                'tfout': total[src]['tfout'] + int(size)
+            }
 
-            total[src] = {'in': 0, 'out': 0} if src not in total else {'in': total[src]['in'], 'out': total[src]['out'] + int(size)}
-            total[dst] = {'in': 0, 'out': 0} if dst not in total else {'in': total[dst]['in'] + int(size), 'out': total[dst]['out']}
-    
     def gen_table():
         tab = tt.Texttable()
         tab.set_deco(tt.Texttable.HEADER)
@@ -70,21 +90,14 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_
         tab.set_header_align(['l', 'l', 'l', 'l', 'l', 'l'])
         tab.set_cols_align(['l', 'l', 'l', 'l', 'l', 'l'])
         tab.set_cols_dtype(['t', 't', 't', 't', 't', 't'])
-        tab.set_cols_width([16, 22, 22, 48, 18, 18])
-
+        tab.set_cols_width([16, 22, 22, 52, 22, 22])
         return tab
-    
+
     tab = gen_table()
     print(tab.draw())
 
     while True:
         ipfilter = re.compile(ipfilter)
-        traffic = {}
-        '''
-        {
-            ip => {in => qu ; out => qu}
-        }
-        '''
 
         while True:
             try:
@@ -93,7 +106,7 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_
             except OSError:
                 pass
         # sort by total bytes, descending
-        total_sorted = sorted(total.items(), key=lambda x: x[1]['in'] + x[1]['out'], reverse=True)
+        total_sorted = sorted(total.items(), key=sorting_meth, reverse=order_rev)
 
         tab = gen_table()
 
@@ -107,20 +120,20 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_
             except:
                 src_name = "???"
 
-            t_in = human(traffic.get(src, {}).get('in'))
-            t_out = human(traffic.get(src, {}).get('out'))
+            t_in = human(transfert['tfin'])
+            t_out = human(transfert['tfout'])
 
             # skip host with a bw usage = 0
-            if not traffic.get(src, {}).get('in') and not traffic.get(src, {}).get('out') and not show_null:
+            if not transfert['tfin'] and not transfert['tfout'] and not show_null:
                 continue
 
             tab.add_row([
                 src,
-                t_in  + colorama.Style.RESET_ALL,
-                t_out + colorama.Style.RESET_ALL,
+                t_in,
+                t_out,
                 src_name,
-                human(transfert['in'], False)  + colorama.Style.RESET_ALL,
-                human(transfert['out'], False) + colorama.Style.RESET_ALL
+                human(transfert['in'], False),
+                human(transfert['out'], False)
             ])
 
         clear()
@@ -134,7 +147,7 @@ if __name__ == '__main__':
     if "-h" in sys.argv[1:]:
         print(f"""Usage {sys.argv[0]}
 
-{sys.argv[0]} [interface] [ipfilter] [pool_interval] [-r] [-z]
+{sys.argv[0]} [interface] [ipfilter] [pool_interval] [-r] [-z] [-sort by]
     default interface     is eth0 (use '/' to replace ' ')
     default ipfilter      is {re_ip}, use / to use the default one
     default pool_interval is 5 seconds
@@ -146,6 +159,12 @@ OPTIONS
     -i\tShow the interfaces and exit
     -r\tRefresh interface after each sniff (default is false)
     -z\tDo not show host with a bandwidth usage equal to zero (default: false)
+    -sort <by>\tChoose the sorting method between
+            total (descending),
+            bwin  (descending),
+            bwout (descending),
+            ip    (ascending)
+        (default is total)
 """)
     elif "-i" in sys.argv[1:]:
         print("""
@@ -160,5 +179,6 @@ Interfaces
             ipfilter=sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] != '/' else re_ip,
             pool_interval=int(sys.argv[3]) if len(sys.argv) >= 4 else -1,
             refresh='-r' in sys.argv[1:],
-            show_null='-z' not in sys.argv[1:]
+            show_null='-z' not in sys.argv[1:],
+            order=sys.argv[sys.argv.index('-sort') + 1] if '-sort' in sys.argv and sys.argv.index('-sort') + 1 < len(sys.argv) else 'total'
         )
