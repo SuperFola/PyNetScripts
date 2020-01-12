@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-from scapy.all import *
+from scapy.all import IP, sniff, IFACES
 import socket
 from time import sleep, time
-import re
-import os
+import re, os, sys
+import texttable as tt
 
 
 re_ip = r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"
@@ -18,17 +18,34 @@ def clear():
         os.system('clear')
 
 
-def main(interface="eth0", ipfilter=re_ip,
-         gethostname=True, pool_interval=-1):
+def main(interface="eth0", ipfilter=re_ip, pool_interval=-1):
+    total = {}
+    '''
+    {
+        ip => {in => qu ; out => qu}
+    }
+    '''
+
     while True:
         ipfilter = re.compile(ipfilter)
         traffic = {}
+        '''
+        {
+            ip => {in => qu ; out => qu}
+        }
+        '''
 
         # return human readable units given bytes
-        def human(num):
-            for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
+        def human(num, in_sec=True):
+            if num is None:
+                return "0.0 b/sec" if in_sec else "0.0 b"
+
+            for x in ['b', 'KB', 'MB', 'GB', 'TB']:
                 if num < 1024.0:
-                    return f"{num / sample_interval:3.1f} {x}/sec"
+                    if in_sec:
+                        return f"{num / sample_interval:3.1f} {x}/sec"
+                    else:
+                        return f"{num:3.1f} {x}"
                 num /= 1024.0
 
         # callback function to process each packet
@@ -39,26 +56,46 @@ def main(interface="eth0", ipfilter=re_ip,
                 dst = pkt.sprintf("%IP.dst%")
                 size = pkt.sprintf("%IP.len%")
 
-                traffic[src] = 0 if src not in traffic else traffic[src] + int(size)
-                traffic[dst] = 0 if dst not in traffic else traffic[dst] + int(size)
+                traffic[src] = {'in': 0, 'out': 0} if src not in traffic else {'in': traffic[src]['in'], 'out': traffic[src]['out'] + int(size)}
+                traffic[dst] = {'in': 0, 'out': 0} if dst not in traffic else {'in': traffic[dst]['in'] + int(size), 'out': traffic[dst]['out']}
+
+                total[src] = {'in': 0, 'out': 0} if src not in total else {'in': total[src]['in'], 'out': total[src]['out'] + int(size)}
+                total[dst] = {'in': 0, 'out': 0} if dst not in total else {'in': total[dst]['in'] + int(size), 'out': total[dst]['out']}
 
         sniff(iface=interface, prn=traffic_monitor_callbak, store=0, timeout=sample_interval)
         # sort by total bytes, descending
-        traffic_sorted = sorted(traffic.items(), key=lambda x: x[1], reverse=True)
-        clear()
+        total_sorted = sorted(total.items(), key=lambda x: x[1]['in'] + x[1]['out'], reverse=True)
 
-        for data in traffic_sorted:
-            src, host_total = data
+        tab = tt.Texttable()
+        tab.set_deco(tt.Texttable.HEADER)
+        tab.header(['Source', 'In', 'Out', 'Host name', 'Total in', 'Total out'])
+        tab.set_cols_width([16, 18, 18, 48, 18, 18])
+
+        for data in total_sorted:
+            src, transfert = data
             if not re.search(ipfilter, src):
                 continue
-            
-            if gethostname:
-                try:
-                    src_name = socket.gethostbyaddr(src)[0]
-                except:
-                    pass
 
-            print(f"{src}\t: {human(host_total)}" + (f" ({src_name})" if gethostname else ""))
+            try:
+                src_name = socket.gethostbyaddr(src)[0]
+                src_name += "\t"
+            except:
+                pass
+
+            t_in = human(traffic.get(src, {}).get('in'))
+            t_out = human(traffic.get(src, {}).get('out'))
+
+            tab.add_row([
+                src,
+                t_in,
+                t_out,
+                src_name,
+                human(transfert['in'], False),
+                human(transfert['out'], False)
+            ])
+
+        clear()
+        print(tab.draw())
 
         if pool_interval == -1:
             break
@@ -66,17 +103,30 @@ def main(interface="eth0", ipfilter=re_ip,
 
 
 if __name__ == '__main__':
-    clear()
-    print("""
+    if "-h" in sys.argv[1:]:
+        print(f"""Usage {sys.argv[0]}
+
+{sys.argv[0]} [interface] [ipfilter] [pool_interval]
+    default interface     is eth0 (use '/' to replace ' ')
+    default ipfilter      is {re_ip}, use / to use the default one
+    default pool_interval is -1 (sniff 1 time and exit), in seconds
+
+{sys.argv[0]} [-h|-i]
+
+OPTIONS
+    -h\tHelp message
+    -i\tShow the interfaces and exit
+""")
+    elif "-i" in sys.argv[1:]:
+        print("""
 Interfaces
 ==========
 """)
-    IFACES.show(True)
-    print("""
-""")
-    main(
-        interface="Intel(R) Wireless-AC 9560 160MHz",
-        ipfilter=re_ip,
-        gethostname=False,
-        pool_interval=-1  # seconds
-    )
+        IFACES.show(True)
+    else:
+        clear()
+        main(
+            interface=sys.argv[1].replace('/', ' ') if len(sys.argv) >= 2 else "eth0",
+            ipfilter=sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] != '/' else re_ip,
+            pool_interval=int(sys.argv[3]) if len(sys.argv) >= 4 else -1
+        )

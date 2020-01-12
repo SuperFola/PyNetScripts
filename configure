@@ -2,3 +2,4 @@
 
 sudo apt-get install fping
 pip3 install --pre scapy[basic]
+pip3 install texttable
