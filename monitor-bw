@@ -2,13 +2,20 @@
 
 from scapy.all import IP, sniff, IFACES
 import socket
-from time import sleep, time
+from time import time
 import re, os, sys
 import texttable as tt
+import colorama
 
 
 re_ip = r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"
-sample_interval = 5  # how long to capture traffic, in seconds
+color = {
+    'b':  colorama.Fore.WHITE,
+    'KB': colorama.Fore.CYAN,
+    'MB': colorama.Fore.MAGENTA,
+    'GB': colorama.Fore.RED,
+    'TB': colorama.Fore.YELLOW
+}
 
 
 def clear():
@@ -18,13 +25,57 @@ def clear():
         os.system('clear')
 
 
-def main(interface="eth0", ipfilter=re_ip, pool_interval=-1):
+def main(interface="eth0", ipfilter=re_ip, pool_interval=5, refresh=False, show_null=False):
+    colorama.init()
+
     total = {}
     '''
     {
         ip => {in => qu ; out => qu}
     }
     '''
+
+    # return human readable units given bytes
+    def human(num, in_sec=True):
+        if num is None:
+            text = "0.0 b/sec" if in_sec else "0.0 b"
+            return color['b'] + text
+
+        for x in ['b', 'KB', 'MB', 'GB', 'TB']:
+            if num < 1024.0:
+                if in_sec:
+                    return color[x] + f"{num / pool_interval:3.1f} {x}/sec"
+                else:
+                    return color[x] + f"{num:3.1f} {x}"
+            num /= 1024.0
+
+    # callback function to process each packet
+    # get total packets for each source->destination combo
+    def traffic_monitor_callbak(pkt):
+        if IP in pkt:
+            src = pkt.sprintf("%IP.src%")
+            dst = pkt.sprintf("%IP.dst%")
+            size = pkt.sprintf("%IP.len%")
+
+            traffic[src] = {'in': 0, 'out': 0} if src not in traffic else {'in': traffic[src]['in'], 'out': traffic[src]['out'] + int(size)}
+            traffic[dst] = {'in': 0, 'out': 0} if dst not in traffic else {'in': traffic[dst]['in'] + int(size), 'out': traffic[dst]['out']}
+
+            total[src] = {'in': 0, 'out': 0} if src not in total else {'in': total[src]['in'], 'out': total[src]['out'] + int(size)}
+            total[dst] = {'in': 0, 'out': 0} if dst not in total else {'in': total[dst]['in'] + int(size), 'out': total[dst]['out']}
+    
+    def gen_table():
+        tab = tt.Texttable()
+        tab.set_deco(tt.Texttable.HEADER)
+        tab.header(['Source', 'In', 'Out', 'Host name', 'Total in', 'Total out'])
+        tab.set_header_align(['l', 'l', 'l', 'l', 'l', 'l'])
+        tab.set_cols_align(['l', 'l', 'l', 'l', 'l', 'l'])
+        tab.set_cols_dtype(['t', 't', 't', 't', 't', 't'])
+        tab.set_cols_width([16, 22, 22, 48, 18, 18])
+
+        return tab
+    
+    tab = gen_table()
+    print(tab.draw())
 
     while True:
         ipfilter = re.compile(ipfilter)
@@ -35,41 +86,16 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=-1):
         }
         '''
 
-        # return human readable units given bytes
-        def human(num, in_sec=True):
-            if num is None:
-                return "0.0 b/sec" if in_sec else "0.0 b"
-
-            for x in ['b', 'KB', 'MB', 'GB', 'TB']:
-                if num < 1024.0:
-                    if in_sec:
-                        return f"{num / sample_interval:3.1f} {x}/sec"
-                    else:
-                        return f"{num:3.1f} {x}"
-                num /= 1024.0
-
-        # callback function to process each packet
-        # get total packets for each source->destination combo
-        def traffic_monitor_callbak(pkt):
-            if IP in pkt:
-                src = pkt.sprintf("%IP.src%")
-                dst = pkt.sprintf("%IP.dst%")
-                size = pkt.sprintf("%IP.len%")
-
-                traffic[src] = {'in': 0, 'out': 0} if src not in traffic else {'in': traffic[src]['in'], 'out': traffic[src]['out'] + int(size)}
-                traffic[dst] = {'in': 0, 'out': 0} if dst not in traffic else {'in': traffic[dst]['in'] + int(size), 'out': traffic[dst]['out']}
-
-                total[src] = {'in': 0, 'out': 0} if src not in total else {'in': total[src]['in'], 'out': total[src]['out'] + int(size)}
-                total[dst] = {'in': 0, 'out': 0} if dst not in total else {'in': total[dst]['in'] + int(size), 'out': total[dst]['out']}
-
-        sniff(iface=interface, prn=traffic_monitor_callbak, store=0, timeout=sample_interval)
+        while True:
+            try:
+                sniff(iface=interface, prn=traffic_monitor_callbak, store=0, timeout=pool_interval)
+                break
+            except OSError:
+                pass
         # sort by total bytes, descending
         total_sorted = sorted(total.items(), key=lambda x: x[1]['in'] + x[1]['out'], reverse=True)
 
-        tab = tt.Texttable()
-        tab.set_deco(tt.Texttable.HEADER)
-        tab.header(['Source', 'In', 'Out', 'Host name', 'Total in', 'Total out'])
-        tab.set_cols_width([16, 18, 18, 48, 18, 18])
+        tab = gen_table()
 
         for data in total_sorted:
             src, transfert = data
@@ -78,44 +104,48 @@ def main(interface="eth0", ipfilter=re_ip, pool_interval=-1):
 
             try:
                 src_name = socket.gethostbyaddr(src)[0]
-                src_name += "\t"
             except:
-                pass
+                src_name = "???"
 
             t_in = human(traffic.get(src, {}).get('in'))
             t_out = human(traffic.get(src, {}).get('out'))
 
+            # skip host with a bw usage = 0
+            if not traffic.get(src, {}).get('in') and not traffic.get(src, {}).get('out') and not show_null:
+                continue
+
             tab.add_row([
                 src,
-                t_in,
-                t_out,
+                t_in  + colorama.Style.RESET_ALL,
+                t_out + colorama.Style.RESET_ALL,
                 src_name,
-                human(transfert['in'], False),
-                human(transfert['out'], False)
+                human(transfert['in'], False)  + colorama.Style.RESET_ALL,
+                human(transfert['out'], False) + colorama.Style.RESET_ALL
             ])
 
         clear()
         print(tab.draw())
 
-        if pool_interval == -1:
+        if not refresh:
             break
-        sleep(pool_interval)
 
 
 if __name__ == '__main__':
     if "-h" in sys.argv[1:]:
         print(f"""Usage {sys.argv[0]}
 
-{sys.argv[0]} [interface] [ipfilter] [pool_interval]
+{sys.argv[0]} [interface] [ipfilter] [pool_interval] [-r] [-z]
     default interface     is eth0 (use '/' to replace ' ')
     default ipfilter      is {re_ip}, use / to use the default one
-    default pool_interval is -1 (sniff 1 time and exit), in seconds
+    default pool_interval is 5 seconds
 
 {sys.argv[0]} [-h|-i]
 
 OPTIONS
     -h\tHelp message
     -i\tShow the interfaces and exit
+    -r\tRefresh interface after each sniff (default is false)
+    -z\tDo not show host with a bandwidth usage equal to zero (default: false)
 """)
     elif "-i" in sys.argv[1:]:
         print("""
@@ -128,5 +158,7 @@ Interfaces
         main(
             interface=sys.argv[1].replace('/', ' ') if len(sys.argv) >= 2 else "eth0",
             ipfilter=sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] != '/' else re_ip,
-            pool_interval=int(sys.argv[3]) if len(sys.argv) >= 4 else -1
+            pool_interval=int(sys.argv[3]) if len(sys.argv) >= 4 else -1,
+            refresh='-r' in sys.argv[1:],
+            show_null='-z' not in sys.argv[1:]
         )

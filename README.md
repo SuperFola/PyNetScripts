@@ -12,6 +12,6 @@ Call it using `./pynmap IPv4/mask`, it will print all the pingable ip adresses d
 
 ## monitor-bw
 
-Uses scapy to sniff the network, and texttable for rendering.
+Uses scapy to sniff the network, and a modified version of texttable (to handle ansi escape chars) for rendering.
 
 A bandwith usage per IP monitor program.
