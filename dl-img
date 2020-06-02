@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+from bs4 import BeautifulSoup, SoupStrainer
+import requests
+import urllib
+import sys
+
+
+url = input("url> ") if len(sys.args) == 1 else sys.args[1]
+
+page = requests.get(url)
+data = page.text
+soup = BeautifulSoup(data)
+
+saved = []
+
+for img in soup.find_all('img'):
+    src = img.get('src')
+    name = src.replace('/', '').replace(':', '').replace('?', '').replace('&', '').lowercase()
+    i = 0
+    while (name if i == 0 else name + str(i)) in saved:
+        i += 1
+    name += str(i)
+    urllib.urlretrieve(src, name)
