@@ -21,4 +21,5 @@ for img in soup.find_all('img'):
     while (name if i == 0 else name + str(i)) in saved:
         i += 1
     name += str(i)
+    saved.append(name)
     urllib.urlretrieve(src, name)
