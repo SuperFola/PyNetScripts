@@ -16,6 +16,8 @@ saved = []
 
 for img in soup.find_all('img'):
     src = img.get('src')
+    if src[0] == '/':
+        src = url + src
     name = src.replace('/', '').replace(':', '').replace('&', '').lower().split('?')[0]
     i = 0
     while (name if i == 0 else name + str(i)) in saved:
