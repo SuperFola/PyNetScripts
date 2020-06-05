@@ -2,24 +2,27 @@
 
 from bs4 import BeautifulSoup, SoupStrainer
 import requests
-import urllib
+import urllib.request as urlreq
 import sys
 
 
-url = input("url> ") if len(sys.args) == 1 else sys.args[1]
+url = input("url> ") if len(sys.argv) == 1 else sys.argv[1]
 
 page = requests.get(url)
 data = page.text
-soup = BeautifulSoup(data)
+soup = BeautifulSoup(data, features="html.parser")
 
 saved = []
 
 for img in soup.find_all('img'):
     src = img.get('src')
-    name = src.replace('/', '').replace(':', '').replace('?', '').replace('&', '').lowercase()
+    name = src.replace('/', '').replace(':', '').replace('&', '').lower().split('?')[0]
     i = 0
     while (name if i == 0 else name + str(i)) in saved:
         i += 1
-    name += str(i)
     saved.append(name)
-    urllib.urlretrieve(src, name)
+    if i != 0:
+        name = name.split('.')
+        name[-2] += str(i)
+        name = '.'.join(name)
+    urlreq.urlretrieve(src, name)
