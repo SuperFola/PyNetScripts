@@ -22,9 +22,12 @@ for img in soup.find_all('img'):
     i = 0
     while (name if i == 0 else name + str(i)) in saved:
         i += 1
-    saved.append(name)
+    saved.append(name + str(i))
     if i != 0:
         name = name.split('.')
-        name[-2] += str(i)
+        if len(name) > 1:
+            name[-2] += str(i)
+        else:
+            name[-1] += str(i)
         name = '.'.join(name)
     urlreq.urlretrieve(src, name)
